@@ -1,4 +1,4 @@
-name: Build OmniaRustDesk – Windows
+name: Build Windows Client
 
 on:
   workflow_dispatch:
@@ -12,13 +12,10 @@ env:
   VERSION: "1.4.6"
 
 jobs:
-  # ── 1. Generate flutter-rust-bridge files (Linux runner) ─────────────────────
   generate-bridge:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install system deps
         run: |
@@ -35,7 +32,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: "3.22.3"   # bridge codegen requires this version
+          flutter-version: "3.22.3"
           cache: true
 
       - name: Install bridge tools
@@ -44,10 +41,9 @@ jobs:
           cargo install flutter_rust_bridge_codegen \
             --version ${{ env.FLUTTER_RUST_BRIDGE_VERSION }} \
             --features "uuid" --locked
-          pushd flutter
+          cd flutter
           sed -i -e 's/extended_text: 14.0.0/extended_text: 13.0.0/g' pubspec.yaml
           flutter pub get
-          popd
 
       - name: Generate bridge
         run: |
@@ -68,17 +64,13 @@ jobs:
             flutter/macos/Runner/bridge_generated.h
             flutter/ios/Runner/bridge_generated.h
 
-  # ── 2. Build Windows x86_64 (Windows runner, MSVC) ───────────────────────────
   build-windows:
     needs: generate-bridge
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
-      - name: Restore bridge files
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: bridge-artifact
           path: ./
@@ -95,6 +87,13 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
+      - name: Export vcpkg cache env
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
@@ -102,31 +101,29 @@ jobs:
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
 
       - name: Install vcpkg deps
-        run: |
-          C:/vcpkg/vcpkg install `
-            --triplet x64-windows-static `
-            --x-install-root="C:/vcpkg/installed"
         shell: pwsh
+        run: |
+          C:/vcpkg/vcpkg install --triplet x64-windows-static --x-install-root="C:/vcpkg/installed"
 
       - name: Build Rust
-        run: cargo build --release
+        shell: bash
         env:
           VCPKG_ROOT: C:/vcpkg
+        run: cargo build --release
 
       - name: Build Flutter Windows
+        shell: bash
         run: |
           cd flutter
           sed -i 's/extended_text: 14.0.0/extended_text: 13.0.0/g' pubspec.yaml
           flutter pub get
           flutter build windows --release
-        shell: bash
 
-      - name: Package installer
+      - name: Package
+        shell: bash
         run: python3 build.py --flutter --skip-cargo
-        shell: bash
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: rustdesk-${{ env.VERSION }}-windows-x86_64
           path: |
