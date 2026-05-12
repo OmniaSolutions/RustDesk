@@ -154,7 +154,7 @@ jobs:
       - name: Rename installer for distribution
         shell: pwsh
         run: |
-          $src = "libs/portable/rustdesk-${{ env.VERSION }}-install.exe"
+          $src = "rustdesk-${{ env.VERSION }}-install.exe"
           $dst = "rustdesk-${{ env.VERSION }}-x86_64.exe"
           Copy-Item $src $dst
           Write-Host "Installer size: $((Get-Item $dst).Length / 1MB) MB"
