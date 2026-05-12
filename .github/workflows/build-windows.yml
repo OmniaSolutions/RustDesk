@@ -6,12 +6,14 @@ on:
 env:
   RUST_VERSION: "1.75"
   FLUTTER_VERSION: "3.24.5"
+  LLVM_VERSION: "15.0.6"
   CARGO_EXPAND_VERSION: "1.0.95"
   FLUTTER_RUST_BRIDGE_VERSION: "1.80.1"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   VERSION: "1.4.6"
 
 jobs:
+  # ── 1. Generate flutter-rust-bridge files on Linux ───────────────────────────
   generate-bridge:
     runs-on: ubuntu-22.04
     steps:
@@ -64,16 +66,46 @@ jobs:
             flutter/macos/Runner/bridge_generated.h
             flutter/ios/Runner/bridge_generated.h
 
+  # ── 2. Build Windows x86_64 (MSVC) ──────────────────────────────────────────
   build-windows:
     needs: generate-bridge
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
+      - name: Restore bridge files
+        uses: actions/download-artifact@v4
         with:
           name: bridge-artifact
           path: ./
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Precache Flutter Windows engine and apply RustDesk custom engine
+        shell: pwsh
+        run: |
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          $enginePath = (Get-Item "C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/").FullName
+          Move-Item -Force windows-x64-release/* $enginePath
+
+      - name: Apply Flutter patch
+        shell: bash
+        run: |
+          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff \
+             $(dirname $(dirname $(which flutter)))
+          cd $(dirname $(dirname $(which flutter)))
+          git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
 
       - uses: dtolnay/rust-toolchain@v1
         with:
@@ -81,11 +113,9 @@ jobs:
           targets: x86_64-pc-windows-msvc
           components: rustfmt
 
-      - uses: subosito/flutter-action@v2
+      - uses: Swatinem/rust-cache@v2
         with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+          prefix-key: windows-2022
 
       - name: Export vcpkg cache env
         uses: actions/github-script@v6
@@ -97,35 +127,29 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgDirectory: C:/vcpkg
+          vcpkgDirectory: C:\vcpkg
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
 
-      - name: Install vcpkg deps
-        shell: pwsh
-        run: |
-          C:/vcpkg/vcpkg install --triplet x64-windows-static --x-install-root="C:/vcpkg/installed"
-
-      - name: Build Rust
+      - name: Install vcpkg dependencies
         shell: bash
         env:
-          VCPKG_ROOT: C:/vcpkg
-        run: cargo build --release
-
-      - name: Build Flutter Windows
-        shell: bash
+          VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
         run: |
-          cd flutter
-          sed -i 's/extended_text: 14.0.0/extended_text: 13.0.0/g' pubspec.yaml
-          flutter pub get
-          flutter build windows --release
+          $VCPKG_ROOT/vcpkg install \
+            --triplet x64-windows-static \
+            --x-install-root="$VCPKG_ROOT/installed"
 
-      - name: Package
-        shell: bash
-        run: python3 build.py --flutter --skip-cargo
+      - name: Build RustDesk (Rust + Flutter)
+        shell: pwsh
+        env:
+          VCPKG_ROOT: C:\vcpkg
+          LLVM_HOME: ${{ env.LLVM_HOME }}
+          LIBCLANG_PATH: ${{ env.LLVM_HOME }}\lib
+        run: |
+          python3 .\build.py --hwcodec --flutter --vram --skip-portable-pack
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: rustdesk-${{ env.VERSION }}-windows-x86_64
-          path: |
-            flutter/build/windows/x64/runner/Release/
-            *.exe
+          path: flutter/build/windows/x64/runner/Release/
