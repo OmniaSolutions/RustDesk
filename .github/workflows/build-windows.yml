@@ -143,8 +143,7 @@ jobs:
         shell: pwsh
         env:
           VCPKG_ROOT: C:\vcpkg
-          LLVM_HOME: ${{ env.LLVM_HOME }}
-          LIBCLANG_PATH: ${{ env.LLVM_HOME }}\lib
+          LIBCLANG_PATH: ${{ env.LLVM_PATH }}\bin
         run: |
           python3 .\build.py --hwcodec --flutter --vram --skip-portable-pack
 
