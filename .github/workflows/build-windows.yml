@@ -149,10 +149,18 @@ jobs:
           LIBCLANG_PATH: ${{ env.LLVM_PATH }}\bin
         run: |
           Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Pub\Cache\advisory" -ErrorAction SilentlyContinue
-          python3 .\build.py --hwcodec --flutter --vram --skip-portable-pack
+          python3 .\build.py --hwcodec --flutter --vram
+
+      - name: Rename installer for distribution
+        shell: pwsh
+        run: |
+          $src = "libs/portable/rustdesk-${{ env.VERSION }}-install.exe"
+          $dst = "rustdesk-${{ env.VERSION }}-x86_64.exe"
+          Copy-Item $src $dst
+          Write-Host "Installer size: $((Get-Item $dst).Length / 1MB) MB"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: rustdesk-${{ env.VERSION }}-windows-x86_64
-          path: flutter/build/windows/x64/runner/Release/
+          path: rustdesk-${{ env.VERSION }}-x86_64.exe
