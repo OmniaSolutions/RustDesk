@@ -159,7 +159,48 @@ jobs:
           Copy-Item $src $dst
           Write-Host "Installer size: $((Get-Item $dst).Length / 1MB) MB"
 
-      - name: Upload artifact
+      # ── Distribution ────────────────────────────────────────────────────────
+      # Primary path: copy the installer straight to the Omnia server over SSH.
+      # Nothing is published on GitHub, so the download stays off the public repo.
+      # Requires these repository secrets (Settings → Secrets and variables → Actions):
+      #   DEPLOY_HOST         server hostname (e.g. omniasolutions.eu)
+      #   DEPLOY_USER         ssh user
+      #   DEPLOY_PATH         absolute dir on the server (e.g. /var/www/support/windows)
+      #   DEPLOY_SSH_KEY      full private key (the matching public key in the server's authorized_keys)
+      #   DEPLOY_PORT         (optional) ssh port, defaults to 22
+      #   DEPLOY_KNOWN_HOSTS  (optional) output of `ssh-keyscan -p <port> <host>` for strict host verification
+      - name: Deploy installer to Omnia server
+        if: ${{ secrets.DEPLOY_HOST != '' }}
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          PORT="${DEPLOY_PORT:-22}"
+          if [ -n "${DEPLOY_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+            SSH_OPTS="-o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes"
+          else
+            SSH_OPTS="-o StrictHostKeyChecking=accept-new"
+          fi
+          scp -i "$HOME/.ssh/deploy_key" -P "$PORT" $SSH_OPTS \
+            "rustdesk-${VERSION}-x86_64.exe" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
+          rm -f "$HOME/.ssh/deploy_key"
+
+      # Fallback only while DEPLOY_* secrets are not configured (e.g. first test runs).
+      # On a public repo this artifact is downloadable by anyone who can see the run,
+      # so it is skipped as soon as SSH deployment is set up.
+      - name: Upload artifact (fallback, no server configured)
+        if: ${{ secrets.DEPLOY_HOST == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: rustdesk-${{ env.VERSION }}-windows-x86_64
